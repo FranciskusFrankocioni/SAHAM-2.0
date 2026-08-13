@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { SearchBar } from "@/components/SearchBar";
+import { IngestionStatus } from "@/components/IngestionStatus";
 import { TICKERS } from "@/lib/idx/tickers";
 
 const POPULAR_CODES = ["BBCA", "BBRI", "TLKM", "ASII", "GOTO", "ANTM", "ADRO", "BMRI"];
@@ -39,6 +40,8 @@ export default function Home() {
           ))}
         </div>
       </div>
+
+      <IngestionStatus />
     </div>
   );
 }
