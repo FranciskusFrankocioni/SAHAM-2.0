@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthorizedCronRequest } from "@/lib/cronAuth";
-import { businessDatesGoingBack, fetchDailySnapshot, mapWithConcurrency, toIsoDate } from "@/lib/idx/idxSource";
+import {
+  businessDatesGoingBack,
+  createIdxSession,
+  fetchDailySnapshot,
+  mapWithConcurrency,
+  toIsoDate,
+} from "@/lib/idx/idxSource";
 import { upsertDailyBars, logIngestion } from "@/lib/db/store";
 
 export const maxDuration = 300;
@@ -33,9 +39,19 @@ export async function GET(req: NextRequest) {
 
   const dates = businessDatesGoingBack(days, offset);
 
+  let session;
+  try {
+    session = await createIdxSession();
+  } catch (err) {
+    return NextResponse.json(
+      { error: err instanceof Error ? err.message : "Failed to establish IDX session" },
+      { status: 502 }
+    );
+  }
+
   const settled = await mapWithConcurrency(dates, CONCURRENCY, async (date) => {
     const isoDate = toIsoDate(date);
-    const rows = await fetchDailySnapshot(date);
+    const rows = await fetchDailySnapshot(date, session);
     if (rows.length === 0) {
       await logIngestion(isoDate, 0, "empty");
       return { date: isoDate, rows: 0 };
