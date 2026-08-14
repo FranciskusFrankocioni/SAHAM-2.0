@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getStockHistory, getBrokerSummary } from "@/lib/idx/provider";
 import { analyzeStock } from "@/lib/idx/indicators";
-import { formatCompact, formatDateShort } from "@/lib/format";
+import { formatCompact, formatDateTimeShort } from "@/lib/format";
 import { SearchBar } from "@/components/SearchBar";
 import { SummaryCards } from "@/components/SummaryCards";
 import { PriceChart } from "@/components/PriceChart";
@@ -62,8 +62,8 @@ export default async function StockPage({
           </span>
         </h1>
         <p className="text-xs text-zinc-500">
-          Data {history.source === "idx" ? "IDX (harian)" : "contoh (dummy)"} &middot;
-          {" "}diperbarui {formatDateShort(history.asOf)}
+          Data {history.source === "idx" ? "IDX" : "contoh (dummy)"} &middot;
+          {" "}diperbarui {formatDateTimeShort(history.asOf)} WIB
         </p>
       </div>
 

@@ -1,6 +1,6 @@
 import { isDbConfigured } from "@/lib/db/client";
 import { getLatestIngestionRun } from "@/lib/db/store";
-import { formatDateShort } from "@/lib/format";
+import { formatDateShort, formatDateTimeShort } from "@/lib/format";
 
 type Status =
   | { kind: "no-db" }
@@ -22,7 +22,7 @@ async function loadStatus(): Promise<Status> {
 
   const label =
     lastRun.status === "ok"
-      ? `Data per ${formatDateShort(lastRun.runDate)} (${lastRun.rowsUpserted} saham)`
+      ? `Diperbarui ${formatDateTimeShort(lastRun.ranAt)} WIB (${lastRun.rowsUpserted} saham)`
       : lastRun.status === "empty"
         ? `${formatDateShort(lastRun.runDate)}: tidak ada data (libur/akhir pekan)`
         : `Gagal mengambil data ${formatDateShort(lastRun.runDate)}`;
