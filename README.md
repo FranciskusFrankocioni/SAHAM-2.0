@@ -16,13 +16,17 @@ intraday.
 ```
 Vercel Cron (tiap hari bursa, 16:30 WIB)
         │
-        ▼
-/api/cron/fetch-daily  ──fetch──▶  idx.co.id (endpoint tidak resmi)
+        ├──▶ /api/cron/fetch-daily            ──fetch──▶ idx.co.id (endpoint tidak resmi)
+        │           │ upsert                                harga, volume, net asing
+        │           ▼
+        │      Postgres: daily_bars
         │
-        ▼ upsert
-   Postgres (tabel daily_bars)
+        └──▶ /api/cron/fetch-broker-summary   ──fetch──▶ exodus.stockbit.com (token pribadi)
+                    │ upsert                                 top-5 broker per saham watchlist
+                    ▼
+               Postgres: broker_summary
         │
-        ▼ baca
+        ▼ baca keduanya
 Halaman /saham/[code]  &  /api/stock/[code]
 ```
 
@@ -79,6 +83,53 @@ SAHAM_DATA_SOURCE=mock npm run dev
 
 Status ingestion terakhir (tanggal, jumlah saham, sukses/gagal) tampil di
 halaman utama, dan bisa dicek programatis lewat `GET /api/status`.
+
+## Ringkasan Broker (data broker riil, opsional)
+
+Selain harga/volume/net asing dari IDX, ada satu fitur tambahan:
+**Ringkasan Broker** (top-5 broker pembeli & penjual per saham per hari) —
+ini data **riil**, bukan indikator turunan, diambil dari akun Stockbit
+pribadi. Fitur ini opsional dan sengaja **tidak otomatis**: login Stockbit
+dilindungi reCAPTCHA, dan proyek ini sengaja tidak membuat automasi yang
+menjebol proteksi itu. Sebagai gantinya, kamu ambil satu token akses
+secara manual dan berkala.
+
+**Cara ambil token:**
+1. Login ke [stockbit.com](https://stockbit.com) seperti biasa di browser desktop
+2. Buka Developer Tools (F12) → tab **Network**
+3. Refresh halaman apa saja di Stockbit
+4. Cari request ke domain **exodus.stockbit.com**, buka tab **Headers**
+5. Salin nilai setelah `Authorization: Bearer ` (token panjang berformat JWT)
+
+**Setup di Vercel:**
+1. Tambah env var `STOCKBIT_TOKEN` = token yang disalin tadi
+2. Tambah env var `WATCHLIST_CODES` = daftar kode saham pribadi dipisah koma,
+   mis. `BBCA,ADRO,GOTO` — **sengaja dibatasi ke watchlist**, bukan seluruh
+   pasar (840+ saham), supaya pola akses lebih wajar & tidak membebani akun
+   pribadi
+3. Redeploy
+
+Cron `/api/cron/fetch-broker-summary` jalan otomatis tiap hari bursa
+(jadwal sama dengan `fetch-daily`, lihat `vercel.json`) untuk kode-kode di
+`WATCHLIST_CODES`. Bisa juga dipanggil manual:
+
+```bash
+curl -H "Authorization: Bearer <CRON_SECRET>" \
+  "https://<domain-kamu>/api/cron/fetch-broker-summary"
+```
+
+**Token akan kadaluarsa** (biasanya hitungan jam–hari). Saat itu terjadi,
+respons cron akan berstatus `token_expired` dan `ingestion_log` mencatatnya
+— ulangi langkah "Cara ambil token" di atas dan update env var
+`STOCKBIT_TOKEN`, lalu redeploy. Tidak ada auto-refresh karena proses login
+awalnya sendiri dilindungi captcha (lihat di atas).
+
+Endpoint & bentuk respons Stockbit direkonstruksi dari proyek open-source
+komunitas (Stockbit tidak punya dokumentasi API resmi), jadi parsing di
+`stockbitSource.ts` ditulis defensif. **Verifikasi setelah deploy** —
+kalau tabel `broker_summary` kosong padahal token & watchlist sudah benar,
+kemungkinan bentuk respons Stockbit berbeda dari dugaan; kabari saya
+detail responsnya.
 
 ### Catatan jam cron
 
@@ -153,9 +204,10 @@ src/
     page.tsx                       Halaman utama (pencarian saham)
     saham/[code]/page.tsx          Halaman detail saham
     api/stock/[code]/route.ts      API JSON untuk data + indikator saham
-    api/cron/fetch-daily/route.ts  Ingestion harian (dipanggil Vercel Cron)
-    api/cron/backfill/route.ts     Ingestion manual untuk riwayat lama
-    api/status/route.ts            Status ingestion terakhir
+    api/cron/fetch-daily/route.ts           Ingestion harga/volume/net asing (Vercel Cron)
+    api/cron/fetch-broker-summary/route.ts  Ingestion broker summary watchlist (Vercel Cron)
+    api/cron/backfill/route.ts              Ingestion manual untuk riwayat lama
+    api/status/route.ts                     Status ingestion terakhir
   components/                      Komponen UI (chart, kartu ringkasan, dll.)
   lib/
     idx/
@@ -165,10 +217,13 @@ src/
       provider.ts                  Baca dari DB, fallback ke mock
       indicators.ts                Perhitungan indikator (foreign net, A/D line, sinyal)
       tickers.ts                   Daftar kode saham untuk pencarian (tidak lengkap)
+    stockbit/
+      types.ts                     Tipe & error khusus Stockbit (termasuk token expired)
+      stockbitSource.ts            Fetch broker distribution dari exodus.stockbit.com
     db/
       client.ts                    Koneksi Postgres (Neon serverless driver)
       schema.ts                    Migrasi idempoten (CREATE TABLE IF NOT EXISTS)
-      store.ts                     Upsert snapshot harian & query per kode saham
+      store.ts                     Upsert snapshot/broker summary & query per kode saham
     cronAuth.ts                    Verifikasi header CRON_SECRET
     format.ts                      Helper format angka/tanggal (locale id-ID)
 vercel.json                        Jadwal Vercel Cron

@@ -2,6 +2,7 @@ import { getPool } from "./client";
 import { ensureSchema } from "./schema";
 import type { DailyBar } from "../idx/types";
 import type { SnapshotRow } from "../idx/idxSource";
+import type { BrokerDistribution, BrokerRow } from "../stockbit/types";
 
 const CHUNK_SIZE = 200;
 const COLUMNS = [
@@ -131,6 +132,114 @@ export async function getBarsForCode(
     bars,
     lastFetchedAt: new Date(latestRow.fetched_at).toISOString(),
   };
+}
+
+const BROKER_SUMMARY_COLUMNS = [
+  "code",
+  "date",
+  "side",
+  "rank",
+  "broker_code",
+  "broker_name",
+  "value",
+  "lot",
+  "avg_price",
+  "source",
+] as const;
+
+/** Upsert one stock's buy+sell broker distribution for one date. */
+export async function upsertBrokerSummary(
+  code: string,
+  date: string,
+  distribution: BrokerDistribution,
+  source = "stockbit"
+): Promise<number> {
+  const rows: Array<{ side: "buy" | "sell"; row: BrokerRow }> = [
+    ...distribution.buy.map((row) => ({ side: "buy" as const, row })),
+    ...distribution.sell.map((row) => ({ side: "sell" as const, row })),
+  ];
+  if (rows.length === 0) return 0;
+
+  await ensureSchema();
+  const pool = getPool();
+
+  const values: unknown[] = [];
+  const tuples = rows.map(({ side, row }, idx) => {
+    const base = idx * BROKER_SUMMARY_COLUMNS.length;
+    values.push(
+      code,
+      date,
+      side,
+      row.rank,
+      row.brokerCode,
+      row.brokerName,
+      row.value,
+      row.lot,
+      row.avgPrice,
+      source
+    );
+    const placeholders = BROKER_SUMMARY_COLUMNS.map((_, c) => `$${base + c + 1}`).join(", ");
+    return `(${placeholders})`;
+  });
+
+  const sql = `
+    INSERT INTO broker_summary (${BROKER_SUMMARY_COLUMNS.join(", ")})
+    VALUES ${tuples.join(", ")}
+    ON CONFLICT (code, date, side, rank, source) DO UPDATE SET
+      broker_code = EXCLUDED.broker_code,
+      broker_name = EXCLUDED.broker_name,
+      value = EXCLUDED.value,
+      lot = EXCLUDED.lot,
+      avg_price = EXCLUDED.avg_price,
+      fetched_at = now()
+  `;
+  await pool.query(sql, values);
+  return rows.length;
+}
+
+export interface StoredBrokerSummary {
+  date: string;
+  buy: BrokerRow[];
+  sell: BrokerRow[];
+}
+
+/** Latest stored broker summary for a stock (most recent date on record). */
+export async function getLatestBrokerSummary(
+  code: string,
+  source = "stockbit"
+): Promise<StoredBrokerSummary | null> {
+  await ensureSchema();
+  const pool = getPool();
+  const latest = await pool.query(
+    `SELECT MAX(date) AS date FROM broker_summary WHERE code = $1 AND source = $2`,
+    [code, source]
+  );
+  const date = latest.rows[0]?.date;
+  if (!date) return null;
+
+  const result = await pool.query(
+    `SELECT side, rank, broker_code, broker_name, value, lot, avg_price
+     FROM broker_summary WHERE code = $1 AND date = $2 AND source = $3
+     ORDER BY side, rank`,
+    [code, date, source]
+  );
+
+  const buy: BrokerRow[] = [];
+  const sell: BrokerRow[] = [];
+  for (const row of result.rows) {
+    const entry: BrokerRow = {
+      rank: Number(row.rank),
+      brokerCode: String(row.broker_code),
+      brokerName: String(row.broker_name || ""),
+      value: Number(row.value),
+      lot: Number(row.lot),
+      avgPrice: Number(row.avg_price),
+    };
+    if (row.side === "buy") buy.push(entry);
+    else sell.push(entry);
+  }
+
+  return { date: String(date), buy, sell };
 }
 
 export async function getLatestIngestionRun(): Promise<
