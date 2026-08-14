@@ -36,6 +36,22 @@ export function ensureSchema(): Promise<void> {
           detail TEXT,
           ran_at TIMESTAMPTZ NOT NULL DEFAULT now()
         );
+
+        CREATE TABLE IF NOT EXISTS broker_summary (
+          code TEXT NOT NULL,
+          date TEXT NOT NULL,
+          side TEXT NOT NULL,
+          rank SMALLINT NOT NULL,
+          broker_code TEXT NOT NULL,
+          broker_name TEXT,
+          value NUMERIC,
+          lot NUMERIC,
+          avg_price NUMERIC,
+          source TEXT NOT NULL DEFAULT 'stockbit',
+          fetched_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+          PRIMARY KEY (code, date, side, rank, source)
+        );
+        CREATE INDEX IF NOT EXISTS broker_summary_code_date_idx ON broker_summary (code, date DESC);
         `
       )
       .then(() => undefined)

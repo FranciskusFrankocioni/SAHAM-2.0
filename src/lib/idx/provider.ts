@@ -1,7 +1,7 @@
 import { mockProvider } from "./mockProvider";
 import type { StockHistory } from "./types";
 import { isDbConfigured } from "../db/client";
-import { getBarsForCode } from "../db/store";
+import { getBarsForCode, getLatestBrokerSummary, type StoredBrokerSummary } from "../db/store";
 
 const FORCE_MOCK = process.env.SAHAM_DATA_SOURCE === "mock";
 
@@ -55,4 +55,19 @@ export async function getStockHistory(
         ? "Database belum terhubung. Menampilkan data contoh (dummy) — hubungkan Postgres dan jalankan ingestion harian untuk data asli."
         : `Belum ada data tersimpan untuk ${normalizedCode}. Menampilkan data contoh (dummy) sampai ingestion harian berjalan untuk kode ini.`,
   };
+}
+
+/**
+ * Broker summary (top-5 buy/sell per broker) has no dummy fallback on
+ * purpose: it's real, sourced-from-your-own-account data or nothing —
+ * showing invented broker codes would defeat the entire point of this
+ * feature. Returns null whenever real data isn't available yet.
+ */
+export async function getBrokerSummary(code: string): Promise<StoredBrokerSummary | null> {
+  if (!isDbConfigured()) return null;
+  try {
+    return await getLatestBrokerSummary(code.toUpperCase());
+  } catch {
+    return null;
+  }
 }

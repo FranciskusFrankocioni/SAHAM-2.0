@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthorizedCronRequest } from "@/lib/cronAuth";
-import { fetchDailySnapshot, toIsoDate } from "@/lib/idx/idxSource";
+import { createIdxSession, fetchDailySnapshot, toIsoDate } from "@/lib/idx/idxSource";
 import { upsertDailyBars, logIngestion } from "@/lib/db/store";
 import { IdxUnavailableError } from "@/lib/idx/types";
 
@@ -23,7 +23,8 @@ export async function GET(req: NextRequest) {
   const isoDate = toIsoDate(date);
 
   try {
-    const rows = await fetchDailySnapshot(date);
+    const session = await createIdxSession();
+    const rows = await fetchDailySnapshot(date, session);
 
     if (rows.length === 0) {
       await logIngestion(isoDate, 0, "empty", "No rows returned (holiday/weekend or IDX issue)");

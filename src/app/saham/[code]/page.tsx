@@ -1,13 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getStockHistory } from "@/lib/idx/provider";
+import { getStockHistory, getBrokerSummary } from "@/lib/idx/provider";
 import { analyzeStock } from "@/lib/idx/indicators";
-import { formatCompact, formatDateShort } from "@/lib/format";
+import { formatCompact, formatDateTimeShort } from "@/lib/format";
 import { SearchBar } from "@/components/SearchBar";
 import { SummaryCards } from "@/components/SummaryCards";
 import { PriceChart } from "@/components/PriceChart";
 import { ForeignFlowChart } from "@/components/ForeignFlowChart";
 import { AccumulationChart } from "@/components/AccumulationChart";
+import { BrokerSummaryTable } from "@/components/BrokerSummaryTable";
 import { Disclaimer } from "@/components/Disclaimer";
 import { DataSourceBanner } from "@/components/DataSourceBanner";
 
@@ -33,7 +34,10 @@ export default async function StockPage({
     ? Number(daysParam)
     : 30;
 
-  const history = await getStockHistory(code, tradingDays);
+  const [history, brokerSummary] = await Promise.all([
+    getStockHistory(code, tradingDays),
+    getBrokerSummary(code),
+  ]);
   const analysis = analyzeStock(history.bars);
 
   const lastBar = history.bars[history.bars.length - 1];
@@ -58,8 +62,8 @@ export default async function StockPage({
           </span>
         </h1>
         <p className="text-xs text-zinc-500">
-          Data {history.source === "idx" ? "IDX (harian)" : "contoh (dummy)"} &middot;
-          {" "}diperbarui {formatDateShort(history.asOf)}
+          Data {history.source === "idx" ? "IDX" : "contoh (dummy)"} &middot;
+          {" "}diperbarui {formatDateTimeShort(history.asOf)} WIB
         </p>
       </div>
 
@@ -121,6 +125,17 @@ export default async function StockPage({
         <div className="rounded-xl border border-black/10 bg-white p-4 dark:border-white/10 dark:bg-white/5">
           <AccumulationChart bars={analysis.bars} />
         </div>
+      </section>
+
+      <section className="flex flex-col gap-2">
+        <h2 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">
+          Ringkasan Broker
+        </h2>
+        <p className="text-xs text-zinc-500">
+          Top 5 broker pembeli &amp; penjual harian &mdash; data asli dari Stockbit, bukan
+          estimasi.
+        </p>
+        <BrokerSummaryTable summary={brokerSummary} />
       </section>
 
       <Disclaimer />

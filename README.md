@@ -5,25 +5,34 @@ harga & volume, **akumulasi asing** (net foreign buy/sell), dan indikator
 teknikal **akumulasi/distribusi** berbasis harga-volume sebagai proksi
 "akumulasi bandar" & "retail distribusi".
 
-Data **bukan realtime by design**: sekali sehari, setelah market close,
-sebuah cron job mengambil snapshot penuh pasar dari IDX dan menyimpannya
-ke database. Website hanya membaca dari database itu — cocok untuk
-memutuskan aksi besok pagi sebelum market buka, bukan untuk trading
-intraday.
+Data **tidak streaming tick-by-tick** (IDX tidak menyediakan itu gratis ke
+siapa pun), tapi diusahakan sedekat mungkin dengan kondisi terkini:
+snapshot harga/volume/net asing di-refresh **tiap ~15 menit selama jam
+bursa** (lihat bagian "Update selama jam bursa" di bawah), bukan cuma
+sekali setelah close. Broker summary tetap sekali sehari setelah close,
+karena sifatnya memang ringkasan akhir hari.
 
 ## Arsitektur data
 
 ```
-Vercel Cron (tiap hari bursa, 16:30 WIB)
+Vercel Cron (1x/hari, 16:30 WIB — backstop)  ──┐
+GitHub Actions (tiap 15 menit, jam bursa)     ──┤
+                                                ▼
+                          /api/cron/fetch-daily  ──fetch──▶ idx.co.id (endpoint tidak resmi)
+                                  │ upsert                     harga, volume, net asing
+                                  ▼
+                            Postgres: daily_bars
+
+Vercel Cron (1x/hari, 16:40 WIB)
         │
         ▼
-/api/cron/fetch-daily  ──fetch──▶  idx.co.id (endpoint tidak resmi)
-        │
-        ▼ upsert
-   Postgres (tabel daily_bars)
-        │
-        ▼ baca
-Halaman /saham/[code]  &  /api/stock/[code]
+  /api/cron/fetch-broker-summary  ──fetch──▶ exodus.stockbit.com (token pribadi)
+        │ upsert                                top-5 broker per saham watchlist
+        ▼
+  Postgres: broker_summary
+
+                    Keduanya dibaca oleh:
+              Halaman /saham/[code]  &  /api/stock/[code]
 ```
 
 Jika database belum terhubung atau belum ada data untuk suatu kode saham
@@ -80,6 +89,89 @@ SAHAM_DATA_SOURCE=mock npm run dev
 Status ingestion terakhir (tanggal, jumlah saham, sukses/gagal) tampil di
 halaman utama, dan bisa dicek programatis lewat `GET /api/status`.
 
+## Update selama jam bursa (GitHub Actions)
+
+Vercel Cron di plan **Hobby** hanya bisa dijadwalkan **1x sehari** —
+tidak bisa tiap beberapa menit. Supaya harga tetap ter-update beberapa
+kali selama jam bursa (bukan cuma sekali setelah close), repo ini punya
+workflow tambahan: `.github/workflows/fetch-daily.yml`, dijadwalkan GitHub
+Actions (gratis, tidak terikat plan Vercel) untuk memanggil
+`/api/cron/fetch-daily` **tiap 15 menit dari jam 09:00–16:00 WIB, Senin–Jumat**.
+Vercel Cron yang sudah ada tetap jalan sebagai *backstop* 1x sehari kalau
+workflow ini nonaktif/gagal.
+
+**Setup di GitHub** (repo → *Settings → Secrets and variables → Actions*):
+1. Tambah secret `CRON_SECRET` — nilainya **harus sama persis** dengan
+   `CRON_SECRET` yang di-set di Vercel
+2. Tambah secret `SITE_URL` — domain deployment kamu, mis.
+   `https://saham-2-0.vercel.app` (tanpa trailing slash)
+3. Workflow otomatis aktif begitu file-nya ter-push ke branch default; bisa
+   dites manual dari tab **Actions** → pilih workflow → **Run workflow**
+
+**Kenapa bukan realtime beneran, dan trade-off-nya:**
+- IDX tidak menyediakan data streaming/tick-by-tick gratis untuk siapa
+  pun (bahkan platform berbayar biasanya tetap delay beberapa detik–menit
+  untuk data gratis/ritel). 15 menit adalah kompromi wajar antara
+  "cukup update" dan "tidak membebani/mencurigakan" buat endpoint yang
+  memang tidak resmi.
+- Makin sering polling, makin besar juga kemungkinan pola requestnya
+  terdeteksi sebagai bot oleh proteksi IDX. Kalau ternyata sering gagal
+  atau mulai kena block lagi, turunkan frekuensinya (ubah
+  `*/15 2-9 * * 1-5` di file workflow, mis. jadi `*/30 ...` untuk 30
+  menit) atau matikan workflow ini dan andalkan Vercel Cron 1x sehari saja
+  — situs tetap jalan normal, cuma update sekali sehari seperti rencana
+  awal.
+- Jadwal GitHub Actions tidak dijamin presisi ke menit (bisa meleset
+  beberapa menit saat GitHub sedang sibuk) — cukup untuk kebutuhan
+  "dekat dengan kondisi terkini", bukan untuk trading intraday presisi.
+
+## Ringkasan Broker (data broker riil, opsional)
+
+Selain harga/volume/net asing dari IDX, ada satu fitur tambahan:
+**Ringkasan Broker** (top-5 broker pembeli & penjual per saham per hari) —
+ini data **riil**, bukan indikator turunan, diambil dari akun Stockbit
+pribadi. Fitur ini opsional dan sengaja **tidak otomatis**: login Stockbit
+dilindungi reCAPTCHA, dan proyek ini sengaja tidak membuat automasi yang
+menjebol proteksi itu. Sebagai gantinya, kamu ambil satu token akses
+secara manual dan berkala.
+
+**Cara ambil token:**
+1. Login ke [stockbit.com](https://stockbit.com) seperti biasa di browser desktop
+2. Buka Developer Tools (F12) → tab **Network**
+3. Refresh halaman apa saja di Stockbit
+4. Cari request ke domain **exodus.stockbit.com**, buka tab **Headers**
+5. Salin nilai setelah `Authorization: Bearer ` (token panjang berformat JWT)
+
+**Setup di Vercel:**
+1. Tambah env var `STOCKBIT_TOKEN` = token yang disalin tadi
+2. Tambah env var `WATCHLIST_CODES` = daftar kode saham pribadi dipisah koma,
+   mis. `BBCA,ADRO,GOTO` — **sengaja dibatasi ke watchlist**, bukan seluruh
+   pasar (840+ saham), supaya pola akses lebih wajar & tidak membebani akun
+   pribadi
+3. Redeploy
+
+Cron `/api/cron/fetch-broker-summary` jalan otomatis tiap hari bursa
+(jadwal sama dengan `fetch-daily`, lihat `vercel.json`) untuk kode-kode di
+`WATCHLIST_CODES`. Bisa juga dipanggil manual:
+
+```bash
+curl -H "Authorization: Bearer <CRON_SECRET>" \
+  "https://<domain-kamu>/api/cron/fetch-broker-summary"
+```
+
+**Token akan kadaluarsa** (biasanya hitungan jam–hari). Saat itu terjadi,
+respons cron akan berstatus `token_expired` dan `ingestion_log` mencatatnya
+— ulangi langkah "Cara ambil token" di atas dan update env var
+`STOCKBIT_TOKEN`, lalu redeploy. Tidak ada auto-refresh karena proses login
+awalnya sendiri dilindungi captcha (lihat di atas).
+
+Endpoint & bentuk respons Stockbit direkonstruksi dari proyek open-source
+komunitas (Stockbit tidak punya dokumentasi API resmi), jadi parsing di
+`stockbitSource.ts` ditulis defensif. **Verifikasi setelah deploy** —
+kalau tabel `broker_summary` kosong padahal token & watchlist sudah benar,
+kemungkinan bentuk respons Stockbit berbeda dari dugaan; kabari saya
+detail responsnya.
+
 ### Catatan jam cron
 
 IDX regular market tutup sekitar pukul 15:49–16:00 WIB. Jadwal cron diset
@@ -89,23 +181,32 @@ presisi ke menit (bisa meleset hingga ±1 jam) — cukup untuk kebutuhan
 
 ### Temuan penting saat pengujian (belum terverifikasi penuh)
 
-Saat menguji `/api/cron/fetch-daily` dari lingkungan pengembangan awal:
-lewat proxy jaringan sandbox, request diblokir kebijakan jaringan
-(bukan dari IDX). Lewat koneksi langsung (melewati proxy sandbox), request
-**sampai ke idx.co.id** tapi dibalas **HTTP 403** — kemungkinan besar
-proteksi anti-bot (WAF/Cloudflare) milik IDX, bukan sekadar endpoint yang
-salah. Vercel men-deploy dari IP publik biasa (bukan lewat proxy sandbox
-ini), jadi kemungkinan hasilnya beda — **tapi wajib dites ulang setelah
-deploy** (panggil `/api/cron/fetch-daily` manual, cek responsnya).
+Percobaan awal memanggil endpoint IDX langsung (hanya dengan header
+`Referer`/`User-Agent`) dibalas **HTTP 403**. Setelah membandingkan dengan
+proyek open-source [`NeaByteLab/IDX-API`](https://github.com/NeaByteLab/IDX-API)
+yang memakai endpoint sama, ternyata `idx.co.id/primary/*` butuh **sesi**:
+GET dulu ke halaman HTML `idx.co.id/id` untuk dapat cookie, baru cookie
+itu dipakai di request ke endpoint JSON (lihat `createIdxSession` di
+`idxSource.ts`). Perbaikan ini sudah diterapkan, tapi **belum bisa
+diverifikasi langsung** karena lingkungan pengembangan proyek ini
+diblokir kebijakan jaringan untuk mengakses `idx.co.id` sama sekali.
+**Wajib dites setelah deploy** — panggil `/api/cron/fetch-daily` manual
+dan cek responsnya:
 
-Jika 403 masih muncul setelah deploy, kemungkinan perlu:
-- Menambah header lain (`Accept-Language`, `sec-fetch-*`, dsb.) supaya
-  lebih mirip request browser asli.
-- Mengambil cookie session dengan GET ke halaman HTML idx.co.id dulu,
-  baru pakai cookie itu untuk request ke endpoint JSON.
-- Kalau IDX benar-benar memblokir traffic non-browser dari IP
-  datacenter/hosting, pertimbangkan sumber data alternatif (mis. provider
-  berbayar) — lihat bagian di atas tentang cara mengganti provider.
+- `status: "ok"` → sudah beres, data asli mulai masuk ke database.
+- `error` menyebut `DATABASE_URL` → IDX-nya sudah lolos, tinggal
+  connect database (lihat langkah setup di atas).
+- `error` masih menyebut IDX (403, "did not return a session cookie",
+  dsb.) → proteksi anti-bot IDX kemungkinan lebih ketat dari dugaan;
+  kabari saya hasil responsnya biar saya sesuaikan lagi.
+
+**Catatan penting soal cakupan data:** endpoint-endpoint di atas (baik di
+proyek ini maupun di `IDX-API`) hanya memberi ringkasan **per saham per
+hari** (harga, volume, net asing) dan ringkasan broker **agregat se-pasar**
+(ranking broker paling aktif, bukan per saham). **Tidak ada** endpoint
+gratis dari IDX yang memberi breakdown "broker X beli/jual berapa lot
+saham Y" per saham — itu tetap perlu sumber lain (lihat bagian "Sumber
+data & keterbatasannya" di bawah).
 
 ## Sumber data & keterbatasannya (penting)
 
@@ -144,9 +245,10 @@ src/
     page.tsx                       Halaman utama (pencarian saham)
     saham/[code]/page.tsx          Halaman detail saham
     api/stock/[code]/route.ts      API JSON untuk data + indikator saham
-    api/cron/fetch-daily/route.ts  Ingestion harian (dipanggil Vercel Cron)
-    api/cron/backfill/route.ts     Ingestion manual untuk riwayat lama
-    api/status/route.ts            Status ingestion terakhir
+    api/cron/fetch-daily/route.ts           Ingestion harga/volume/net asing (Vercel Cron)
+    api/cron/fetch-broker-summary/route.ts  Ingestion broker summary watchlist (Vercel Cron)
+    api/cron/backfill/route.ts              Ingestion manual untuk riwayat lama
+    api/status/route.ts                     Status ingestion terakhir
   components/                      Komponen UI (chart, kartu ringkasan, dll.)
   lib/
     idx/
@@ -156,13 +258,17 @@ src/
       provider.ts                  Baca dari DB, fallback ke mock
       indicators.ts                Perhitungan indikator (foreign net, A/D line, sinyal)
       tickers.ts                   Daftar kode saham untuk pencarian (tidak lengkap)
+    stockbit/
+      types.ts                     Tipe & error khusus Stockbit (termasuk token expired)
+      stockbitSource.ts            Fetch broker distribution dari exodus.stockbit.com
     db/
       client.ts                    Koneksi Postgres (Neon serverless driver)
       schema.ts                    Migrasi idempoten (CREATE TABLE IF NOT EXISTS)
-      store.ts                     Upsert snapshot harian & query per kode saham
+      store.ts                     Upsert snapshot/broker summary & query per kode saham
     cronAuth.ts                    Verifikasi header CRON_SECRET
     format.ts                      Helper format angka/tanggal (locale id-ID)
-vercel.json                        Jadwal Vercel Cron
+vercel.json                        Jadwal Vercel Cron (backstop 1x/hari)
+.github/workflows/fetch-daily.yml  Jadwal GitHub Actions (tiap 15 menit, jam bursa)
 ```
 
 ## Roadmap yang masuk akal berikutnya

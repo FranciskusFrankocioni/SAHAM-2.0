@@ -1,0 +1,24 @@
+name: Fetch IDX daily snapshot (frequent, trading hours)
+
+# Vercel Cron on the Hobby plan can only run once a day, which isn't
+# enough to feel "close to live" during market hours. This workflow calls
+# the same ingestion endpoint every 15 minutes while IDX is open
+# (09:00-16:00 WIB = 02:00-09:00 UTC, weekdays), so the site's numbers
+# refresh several times during the day instead of only once after close.
+# The once-daily Vercel Cron (see vercel.json) stays on as a reliable
+# backstop in case this workflow is disabled or GitHub Actions has an
+# outage.
+on:
+  schedule:
+    - cron: "*/15 2-9 * * 1-5"
+  workflow_dispatch: {}
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call /api/cron/fetch-daily
+        run: |
+          curl -sS -f \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            "${{ secrets.SITE_URL }}/api/cron/fetch-daily"
