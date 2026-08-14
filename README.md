@@ -15,13 +15,12 @@ karena sifatnya memang ringkasan akhir hari.
 ## Arsitektur data
 
 ```
-Vercel Cron (1x/hari, 16:30 WIB — backstop)  ──┐
-GitHub Actions (tiap 15 menit, jam bursa)     ──┤
-                                                ▼
-                          /api/cron/fetch-daily  ──fetch──▶ idx.co.id (endpoint tidak resmi)
-                                  │ upsert                     harga, volume, net asing
-                                  ▼
-                            Postgres: daily_bars
+GitHub Actions (Python + curl_cffi, tiap 15 menit, jam bursa)
+        │  scripts/fetch_idx_daily.py
+        ▼ fetch                                idx.co.id (endpoint tidak resmi)
+        │ upsert langsung ke Postgres
+        ▼
+  Postgres: daily_bars  ◀── scripts/backfill_idx.py (manual, isi riwayat)
 
 Vercel Cron (1x/hari, 16:40 WIB)
         │
@@ -34,6 +33,14 @@ Vercel Cron (1x/hari, 16:40 WIB)
                     Keduanya dibaca oleh:
               Halaman /saham/[code]  &  /api/stock/[code]
 ```
+
+Harga/volume/net asing **tidak** diambil oleh route Next.js
+(`/api/cron/fetch-daily`) lagi — endpoint IDX menolak request dari
+runtime Node.js Vercel dengan HTTP 403 walau sudah pakai session cookie
+yang benar (kemungkinan deteksi fingerprint TLS/HTTP2, bukan sekadar
+cookie). Route Next.js-nya masih ada di kode (untuk referensi/percobaan
+manual) tapi **tidak dijadwalkan** lagi. Broker summary (Stockbit) tidak
+kena masalah yang sama, jadi tetap lewat Vercel Cron seperti semula.
 
 Jika database belum terhubung atau belum ada data untuk suatu kode saham
 (mis. sebelum cron pertama berjalan), halaman otomatis menampilkan data
@@ -70,60 +77,66 @@ SAHAM_DATA_SOURCE=mock npm run dev
    ingestion menolak request tanpa header ini — supaya URL cron tidak bisa
    dipicu sembarang orang.
 4. **Redeploy** setelah env var di atas ter-set.
-5. Cron di `vercel.json` (`/api/cron/fetch-daily`, tiap hari bursa pukul
-   16:30 WIB / 09:30 UTC) akan mulai jalan otomatis mulai hari kerja
-   berikutnya.
-6. **Isi data historis (backfill)** supaya chart tidak kosong sambil
-   menunggu cron harian terkumpul. Panggil manual (ganti domain & secret):
-
-   ```bash
-   curl -H "Authorization: Bearer <CRON_SECRET>" \
-     "https://<domain-kamu>/api/cron/backfill?days=30&offset=0"
-   ```
-
-   Endpoint ini dibatasi 30 hari bursa per panggilan (menghindari timeout
-   function). Untuk riwayat lebih panjang, panggil lagi dengan
-   `offset=30`, `offset=60`, dst. — respons memberi `nextOffset` yang bisa
-   langsung dipakai.
+5. Lanjut ke bagian **"Update selama jam bursa (GitHub Actions)"** di
+   bawah — itu yang benar-benar mengisi `daily_bars` (harga/volume/net
+   asing), bukan Vercel Cron.
 
 Status ingestion terakhir (tanggal, jumlah saham, sukses/gagal) tampil di
 halaman utama, dan bisa dicek programatis lewat `GET /api/status`.
 
-## Update selama jam bursa (GitHub Actions)
+## Update selama jam bursa (GitHub Actions + Python)
 
-Vercel Cron di plan **Hobby** hanya bisa dijadwalkan **1x sehari** —
-tidak bisa tiap beberapa menit. Supaya harga tetap ter-update beberapa
-kali selama jam bursa (bukan cuma sekali setelah close), repo ini punya
-workflow tambahan: `.github/workflows/fetch-daily.yml`, dijadwalkan GitHub
-Actions (gratis, tidak terikat plan Vercel) untuk memanggil
-`/api/cron/fetch-daily` **tiap 15 menit dari jam 09:00–16:00 WIB, Senin–Jumat**.
-Vercel Cron yang sudah ada tetap jalan sebagai *backstop* 1x sehari kalau
-workflow ini nonaktif/gagal.
+Dua masalah, satu solusi:
+
+1. Vercel Cron di plan **Hobby** hanya bisa dijadwalkan **1x sehari**.
+2. Endpoint IDX menolak (**HTTP 403**) request dari runtime Node.js
+   Vercel — sudah dikonfirmasi di production, bahkan setelah pakai
+   session cookie yang benar. Ini kemungkinan besar deteksi di level
+   *fingerprint* TLS/HTTP2 (mirip yang dipakai Cloudflare), bukan cuma
+   soal cookie — dan Node `fetch()` tidak punya cara mudah untuk
+   menirukan fingerprint browser asli di level itu.
+
+Solusinya: `scripts/fetch_idx_daily.py`, skrip Python yang pakai
+[`curl_cffi`](https://github.com/lexiforest/curl_cffi) (`impersonate="chrome"`)
+untuk menirukan fingerprint Chrome asli — teknik yang sama dipakai proyek
+open-source [`idx-bei`](https://github.com/nichsedge/idx-bei) yang masih
+aktif jalan. Skrip ini connect **langsung ke Postgres** (bukan lewat
+Next.js/Vercel sama sekali), dijalankan oleh
+`.github/workflows/fetch-daily.yml` **tiap 15 menit, jam 09:00–16:00 WIB,
+Senin–Jumat**.
 
 **Setup di GitHub** (repo → *Settings → Secrets and variables → Actions*):
-1. Tambah secret `CRON_SECRET` — nilainya **harus sama persis** dengan
-   `CRON_SECRET` yang di-set di Vercel
-2. Tambah secret `SITE_URL` — domain deployment kamu, mis.
-   `https://saham-2-0.vercel.app` (tanpa trailing slash)
-3. Workflow otomatis aktif begitu file-nya ter-push ke branch default; bisa
-   dites manual dari tab **Actions** → pilih workflow → **Run workflow**
+1. Tambah secret `DATABASE_URL` — **connection string Postgres yang sama**
+   dengan yang ada di Environment Variables project Vercel kamu (buka
+   Vercel → Settings → Environment Variables → lihat/copy nilai
+   `DATABASE_URL`)
+2. Workflow otomatis aktif begitu file-nya ter-push ke branch default.
+   Bisa dites manual: tab **Actions** (di repo GitHub, bukan Vercel) →
+   pilih **"Fetch IDX daily snapshot (frequent, trading hours)"** →
+   **Run workflow** → tunggu selesai → klik run-nya → lihat log-nya
+   (harus muncul `OK: upserted N rows for YYYY-MM-DD`)
+
+**Isi data historis (backfill)** — sekali di awal, supaya chart tidak
+kosong sambil menunggu data harian terkumpul:
+1. Tab **Actions** → pilih **"Backfill IDX history"** → **Run workflow**
+2. Isi `days` (default 30) dan `offset` (default 0), lalu jalankan
+3. Untuk riwayat lebih panjang, ulangi dengan `offset` = 30, 60, dst.
+   (log run-nya kasih tahu offset berikutnya)
+
+`/api/cron/fetch-daily` dan `/api/cron/backfill` (route Next.js) masih
+ada di kode sebagai fallback manual, tapi tidak dijadwalkan — keduanya
+kemungkinan besar tetap kena 403 sampai ada perbaikan lebih lanjut untuk
+runtime Node.js.
 
 **Kenapa bukan realtime beneran, dan trade-off-nya:**
 - IDX tidak menyediakan data streaming/tick-by-tick gratis untuk siapa
-  pun (bahkan platform berbayar biasanya tetap delay beberapa detik–menit
-  untuk data gratis/ritel). 15 menit adalah kompromi wajar antara
-  "cukup update" dan "tidak membebani/mencurigakan" buat endpoint yang
-  memang tidak resmi.
-- Makin sering polling, makin besar juga kemungkinan pola requestnya
-  terdeteksi sebagai bot oleh proteksi IDX. Kalau ternyata sering gagal
-  atau mulai kena block lagi, turunkan frekuensinya (ubah
-  `*/15 2-9 * * 1-5` di file workflow, mis. jadi `*/30 ...` untuk 30
-  menit) atau matikan workflow ini dan andalkan Vercel Cron 1x sehari saja
-  — situs tetap jalan normal, cuma update sekali sehari seperti rencana
-  awal.
+  pun. 15 menit adalah kompromi wajar antara "cukup update" dan "tidak
+  membebani/mencurigakan" buat endpoint yang memang tidak resmi.
+- Makin sering polling, makin besar kemungkinan pola requestnya
+  terdeteksi sebagai bot. Kalau mulai sering gagal, turunkan frekuensinya
+  (ubah `*/15 2-9 * * 1-5` di `fetch-daily.yml`, mis. jadi `*/30 ...`).
 - Jadwal GitHub Actions tidak dijamin presisi ke menit (bisa meleset
-  beberapa menit saat GitHub sedang sibuk) — cukup untuk kebutuhan
-  "dekat dengan kondisi terkini", bukan untuk trading intraday presisi.
+  beberapa menit saat GitHub sedang sibuk).
 
 ## Ringkasan Broker (data broker riil, opsional)
 
@@ -179,26 +192,28 @@ IDX regular market tutup sekitar pukul 15:49–16:00 WIB. Jadwal cron diset
 presisi ke menit (bisa meleset hingga ±1 jam) — cukup untuk kebutuhan
 "data setelah tutup pasar, dilihat sore/malam/besok pagi" di proyek ini.
 
-### Temuan penting saat pengujian (belum terverifikasi penuh)
+### Temuan penting saat pengujian
 
-Percobaan awal memanggil endpoint IDX langsung (hanya dengan header
-`Referer`/`User-Agent`) dibalas **HTTP 403**. Setelah membandingkan dengan
-proyek open-source [`NeaByteLab/IDX-API`](https://github.com/NeaByteLab/IDX-API)
-yang memakai endpoint sama, ternyata `idx.co.id/primary/*` butuh **sesi**:
-GET dulu ke halaman HTML `idx.co.id/id` untuk dapat cookie, baru cookie
-itu dipakai di request ke endpoint JSON (lihat `createIdxSession` di
-`idxSource.ts`). Perbaikan ini sudah diterapkan, tapi **belum bisa
-diverifikasi langsung** karena lingkungan pengembangan proyek ini
-diblokir kebijakan jaringan untuk mengakses `idx.co.id` sama sekali.
-**Wajib dites setelah deploy** — panggil `/api/cron/fetch-daily` manual
-dan cek responsnya:
+Riwayat singkatnya:
+1. Percobaan awal memanggil endpoint IDX (hanya header `Referer`/`User-Agent`)
+   → **HTTP 403**.
+2. Ditambah session cookie (`createIdxSession` di `idxSource.ts`, meniru
+   [`NeaByteLab/IDX-API`](https://github.com/NeaByteLab/IDX-API)) → **masih
+   HTTP 403**, dikonfirmasi langsung dari server Vercel production (bukan
+   masalah jaringan sandbox pengembangan).
+3. Kesimpulan: proteksinya kemungkinan besar di level *fingerprint*
+   TLS/HTTP2, bukan cuma cookie — dan runtime Node.js Vercel tidak bisa
+   dengan mudah menirukan fingerprint browser asli di level itu.
+4. **Perbaikan yang dipakai sekarang:** pindah ke Python + `curl_cffi`
+   (`impersonate="chrome"`), dijalankan lewat GitHub Actions, langsung ke
+   Postgres — lihat bagian "Update selama jam bursa" di atas. Teknik ini
+   terbukti dipakai proyek [`idx-bei`](https://github.com/nichsedge/idx-bei)
+   yang masih aktif berjalan.
 
-- `status: "ok"` → sudah beres, data asli mulai masuk ke database.
-- `error` menyebut `DATABASE_URL` → IDX-nya sudah lolos, tinggal
-  connect database (lihat langkah setup di atas).
-- `error` masih menyebut IDX (403, "did not return a session cookie",
-  dsb.) → proteksi anti-bot IDX kemungkinan lebih ketat dari dugaan;
-  kabari saya hasil responsnya biar saya sesuaikan lagi.
+Route Next.js (`/api/cron/fetch-daily`, `/api/cron/backfill`) masih ada
+di kode tapi **belum diverifikasi berhasil** dan tidak dijadwalkan lagi —
+kalau suatu saat proteksi IDX berubah/kendor, keduanya bisa dites ulang
+manual lewat `?secret=<CRON_SECRET>` di URL.
 
 **Catatan penting soal cakupan data:** endpoint-endpoint di atas (baik di
 proyek ini maupun di `IDX-API`) hanya memberi ringkasan **per saham per
@@ -245,9 +260,9 @@ src/
     page.tsx                       Halaman utama (pencarian saham)
     saham/[code]/page.tsx          Halaman detail saham
     api/stock/[code]/route.ts      API JSON untuk data + indikator saham
-    api/cron/fetch-daily/route.ts           Ingestion harga/volume/net asing (Vercel Cron)
+    api/cron/fetch-daily/route.ts           Legacy/fallback manual (kena 403 dari Node.js)
     api/cron/fetch-broker-summary/route.ts  Ingestion broker summary watchlist (Vercel Cron)
-    api/cron/backfill/route.ts              Ingestion manual untuk riwayat lama
+    api/cron/backfill/route.ts              Legacy/fallback manual (kena 403 dari Node.js)
     api/status/route.ts                     Status ingestion terakhir
   components/                      Komponen UI (chart, kartu ringkasan, dll.)
   lib/
@@ -267,13 +282,20 @@ src/
       store.ts                     Upsert snapshot/broker summary & query per kode saham
     cronAuth.ts                    Verifikasi header CRON_SECRET
     format.ts                      Helper format angka/tanggal (locale id-ID)
-vercel.json                        Jadwal Vercel Cron (backstop 1x/hari)
-.github/workflows/fetch-daily.yml  Jadwal GitHub Actions (tiap 15 menit, jam bursa)
+scripts/
+  fetch_idx_daily.py               Fetch harian real (Python + curl_cffi) → langsung ke Postgres
+  backfill_idx.py                  Isi riwayat lama (manual, via GitHub Actions)
+  requirements.txt                 Dependency Python (curl_cffi, psycopg2-binary)
+vercel.json                        Jadwal Vercel Cron (broker summary saja)
+.github/workflows/
+  fetch-daily.yml                  Jadwal GitHub Actions (tiap 15 menit, jam bursa)
+  backfill-idx.yml                 Trigger manual buat isi riwayat lama
 ```
 
 ## Roadmap yang masuk akal berikutnya
 
-- Verifikasi & perbaiki `idxSource.ts` terhadap respons live idx.co.id.
+- Verifikasi `scripts/fetch_idx_daily.py` beneran lolos 403 IDX setelah
+  jalan di GitHub Actions (lihat bagian "Update selama jam bursa").
 - Halaman screener/watchlist multi-saham (bukan hanya satu saham per halaman).
 - Daftar ticker lengkap (saat ini hanya berisi ~55 saham populer) — atau
   ambil daftar saham langsung dari kolom `code` di tabel `daily_bars`
