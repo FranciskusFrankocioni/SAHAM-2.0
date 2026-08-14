@@ -1,0 +1,33 @@
+name: Backfill IDX history
+
+# Manual-only (not scheduled). Run once to seed history, and again with a
+# higher "offset" input to page further back if needed. See
+# scripts/backfill_idx.py for details.
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Business days to fetch this run"
+        required: false
+        default: "30"
+      offset:
+        description: "Business days to skip before starting (page further back)"
+        required: false
+        default: "0"
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
+      - name: Backfill IDX history
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BACKFILL_DAYS: ${{ inputs.days }}
+          BACKFILL_OFFSET: ${{ inputs.offset }}
+        run: python scripts/backfill_idx.py
