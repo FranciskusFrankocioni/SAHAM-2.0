@@ -17,6 +17,7 @@ the Next.js app.
 """
 
 import os
+import re
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -106,6 +107,18 @@ def jakarta_today() -> datetime:
     return datetime.now(timezone.utc) + timedelta(hours=7)
 
 
+def normalize_database_url(raw: str) -> str:
+    """Tolerates common copy/paste mistakes: pasting a whole .env-style
+    snippet (comment lines, multiple KEY=value lines) instead of just the
+    connection string. Extracts the first postgres(ql):// URL found and
+    strips surrounding quotes/whitespace.
+    """
+    match = re.search(r"postgres(?:ql)?://\S+", raw.strip())
+    if not match:
+        return raw.strip()
+    return match.group(0).strip("'\" \t\r\n")
+
+
 def fetch_snapshot(date_compact: str) -> list[dict]:
     url = f"{BASE_URL}?length=9999&start=0&date={date_compact}"
     resp = requests.get(
@@ -193,7 +206,7 @@ def log_ingestion(conn, run_date: str, rows_upserted: int, status: str, detail: 
 
 
 def main() -> int:
-    database_url = os.environ.get("DATABASE_URL")
+    database_url = normalize_database_url(os.environ.get("DATABASE_URL", ""))
     if not database_url:
         print("ERROR: DATABASE_URL is not set", file=sys.stderr)
         return 1

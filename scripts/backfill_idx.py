@@ -26,6 +26,7 @@ from fetch_idx_daily import (
     jakarta_today,
     log_ingestion,
     normalize,
+    normalize_database_url,
     upsert_daily_bars,
 )
 
@@ -45,7 +46,7 @@ def business_dates_going_back(count: int, offset_days: int = 0):
 
 
 def main() -> int:
-    database_url = os.environ.get("DATABASE_URL")
+    database_url = normalize_database_url(os.environ.get("DATABASE_URL", ""))
     if not database_url:
         print("ERROR: DATABASE_URL is not set", file=sys.stderr)
         return 1
