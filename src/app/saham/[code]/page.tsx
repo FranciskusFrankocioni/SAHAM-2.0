@@ -102,7 +102,7 @@ export default async function StockPage({
           Akumulasi Asing (Foreign Flow)
         </h2>
         <p className="text-xs text-zinc-500">
-          Batang: net beli/jual asing harian (lembar). Garis: kumulatif net asing sepanjang periode.
+          Batang: net beli/jual asing harian (nilai Rp). Garis: kumulatif net asing sepanjang periode.
         </p>
         <div className="rounded-xl border border-black/10 bg-white p-4 dark:border-white/10 dark:bg-white/5">
           <ForeignFlowChart bars={analysis.bars} />

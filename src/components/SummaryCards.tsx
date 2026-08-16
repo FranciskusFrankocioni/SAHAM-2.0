@@ -42,7 +42,7 @@ export function SummaryCards({
       />
       <Card label="Sinyal Teknikal" value={<SignalBadge signal={analysis.overallSignal} />} />
       <Card
-        label="Net Asing (periode)"
+        label="Net Asing (Rp, periode)"
         value={formatCompact(analysis.foreignNetTotal)}
         sub={analysis.foreignNetTotal >= 0 ? "Net beli asing" : "Net jual asing"}
       />

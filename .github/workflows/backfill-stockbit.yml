@@ -1,0 +1,29 @@
+name: Backfill Stockbit price history
+
+# Manual-only (not scheduled). Run once to seed history for the
+# watchlist. See scripts/backfill_stockbit.py for details.
+on:
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "Calendar days of history to fetch"
+        required: false
+        default: "90"
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
+      - name: Backfill Stockbit history
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          STOCKBIT_TOKEN: ${{ secrets.STOCKBIT_TOKEN }}
+          WATCHLIST_CODES: ${{ secrets.WATCHLIST_CODES }}
+          BACKFILL_DAYS: ${{ inputs.days }}
+        run: python scripts/backfill_stockbit.py

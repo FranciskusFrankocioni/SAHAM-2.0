@@ -50,7 +50,7 @@ export function ForeignFlowChart({ bars }: { bars: EnrichedBar[] }) {
           labelFormatter={(v) => formatDateShort(String(v))}
           formatter={(value, name) => [
             formatCompact(Number(value)),
-            name === "foreignNet" ? "Net asing (lembar)" : "Kumulatif asing",
+            name === "foreignNet" ? "Net asing (Rp)" : "Kumulatif asing (Rp)",
           ]}
           contentStyle={{
             background: "var(--chart-tooltip-bg)",

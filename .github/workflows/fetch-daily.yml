@@ -1,18 +1,15 @@
-name: Fetch IDX daily snapshot (frequent, trading hours)
+name: Fetch daily price/volume/foreign-flow (frequent, trading hours)
 
-# Two things this workflow solves at once:
+# Runs every 15 minutes while IDX is open (09:00-16:00 WIB = 02:00-09:00
+# UTC, weekdays) so numbers refresh several times a day instead of once.
 #
-# 1. Vercel Cron on the Hobby plan only runs once a day, which isn't
-#    enough to feel "close to live" during market hours. This runs every
-#    15 minutes while IDX is open (09:00-16:00 WIB = 02:00-09:00 UTC,
-#    weekdays).
-# 2. idx.co.id's data endpoint returned HTTP 403 from Vercel's Node.js
-#    runtime even with a proper session cookie — evidence of
-#    fingerprint-level (TLS/HTTP2) bot detection that Node's fetch() has
-#    no way to spoof. curl_cffi (Python) can impersonate a real Chrome
-#    fingerprint, which is what scripts/fetch_idx_daily.py uses. So this
-#    workflow runs that script directly against Postgres instead of
-#    calling the (currently blocked) Vercel API route.
+# Source is Stockbit (scripts/fetch_stockbit_daily.py), not IDX directly:
+# idx.co.id blocks GitHub Actions' IP ranges with a Cloudflare "Attention
+# Required" interactive challenge (confirmed live 2026-08-16) — not
+# something curl_cffi's TLS impersonation can get past, since it needs an
+# actual browser/residential IP. Stockbit's authenticated API hasn't shown
+# the same behavior. scripts/fetch_idx_daily.py is kept in the repo for
+# reference but is no longer scheduled.
 on:
   schedule:
     - cron: "*/15 2-9 * * 1-5"
@@ -28,7 +25,9 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: pip install -r scripts/requirements.txt
-      - name: Fetch IDX daily snapshot and upsert into Postgres
+      - name: Fetch Stockbit daily snapshot and upsert into Postgres
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-        run: python scripts/fetch_idx_daily.py
+          STOCKBIT_TOKEN: ${{ secrets.STOCKBIT_TOKEN }}
+          WATCHLIST_CODES: ${{ secrets.WATCHLIST_CODES }}
+        run: python scripts/fetch_stockbit_daily.py
