@@ -69,6 +69,15 @@ export const TICKERS: Ticker[] = [
   { code: "BUMI", name: "Bumi Resources Tbk.", sector: "Batu Bara" },
 ];
 
+// Used when WATCHLIST_CODES isn't set — a reasonable starting point of
+// large, liquid IDX stocks, not a personalized pick. Override with the
+// WATCHLIST_CODES env var (comma-separated codes) any time. Kept in sync
+// with DEFAULT_WATCHLIST in scripts/fetch_stockbit_daily.py.
+export const DEFAULT_WATCHLIST = [
+  "BBCA", "BBRI", "BMRI", "BBNI", "TLKM",
+  "ASII", "GOTO", "ADRO", "ANTM", "ICBP",
+];
+
 export function findTicker(code: string): Ticker | undefined {
   return TICKERS.find((t) => t.code === code.toUpperCase());
 }

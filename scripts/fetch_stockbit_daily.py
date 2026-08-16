@@ -56,6 +56,14 @@ REQUEST_TIMEOUT = 20
 REQUEST_DELAY_SECONDS = 0.8
 LOOKBACK_DAYS = 7  # buffer over weekends/holidays; upsert makes re-fetching cheap
 
+# Used when WATCHLIST_CODES isn't set — a reasonable starting point of
+# large, liquid IDX stocks, not a personalized pick. Override with the
+# WATCHLIST_CODES env var/secret (comma-separated codes) any time.
+DEFAULT_WATCHLIST = [
+    "BBCA", "BBRI", "BMRI", "BBNI", "TLKM",
+    "ASII", "GOTO", "ADRO", "ANTM", "ICBP",
+]
+
 
 class StockbitAuthError(Exception):
     pass
@@ -130,12 +138,16 @@ def main() -> int:
         print("ERROR: STOCKBIT_TOKEN is not set", file=sys.stderr)
         return 1
 
-    watchlist = [
-        c.strip().upper() for c in os.environ.get("WATCHLIST_CODES", "").split(",") if c.strip()
-    ]
-    if not watchlist:
-        print("ERROR: WATCHLIST_CODES is not set (comma-separated stock codes)", file=sys.stderr)
-        return 1
+    watchlist_raw = os.environ.get("WATCHLIST_CODES", "")
+    watchlist = (
+        [c.strip().upper() for c in watchlist_raw.split(",") if c.strip()]
+        if watchlist_raw.strip()
+        else list(DEFAULT_WATCHLIST)
+    )
+    print(
+        f"Using {'default' if not watchlist_raw.strip() else 'custom'} watchlist: "
+        f"{', '.join(watchlist)}"
+    )
 
     database_url = normalize_database_url(os.environ.get("DATABASE_URL", ""))
     if not database_url:

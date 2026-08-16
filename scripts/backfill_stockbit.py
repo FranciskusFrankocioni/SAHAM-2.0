@@ -8,8 +8,9 @@ Meant to be run manually (workflow_dispatch), not on a schedule.
 
 Env vars:
   STOCKBIT_TOKEN    required
-  WATCHLIST_CODES   required, comma-separated
   DATABASE_URL      required
+  WATCHLIST_CODES   optional, comma-separated; defaults to DEFAULT_WATCHLIST
+                     in fetch_stockbit_daily.py
   BACKFILL_DAYS     calendar days of history to fetch (default 90)
 """
 
@@ -21,6 +22,7 @@ import psycopg2
 
 from fetch_idx_daily import SCHEMA_SQL, jakarta_today, log_ingestion, normalize_database_url
 from fetch_stockbit_daily import (
+    DEFAULT_WATCHLIST,
     StockbitAuthError,
     fetch_historical_summary,
     normalize_bars,
@@ -57,12 +59,12 @@ def main() -> int:
         print("ERROR: STOCKBIT_TOKEN is not set", file=sys.stderr)
         return 1
 
-    watchlist = [
-        c.strip().upper() for c in os.environ.get("WATCHLIST_CODES", "").split(",") if c.strip()
-    ]
-    if not watchlist:
-        print("ERROR: WATCHLIST_CODES is not set", file=sys.stderr)
-        return 1
+    watchlist_raw = os.environ.get("WATCHLIST_CODES", "")
+    watchlist = (
+        [c.strip().upper() for c in watchlist_raw.split(",") if c.strip()]
+        if watchlist_raw.strip()
+        else list(DEFAULT_WATCHLIST)
+    )
 
     database_url = normalize_database_url(os.environ.get("DATABASE_URL", ""))
     if not database_url:
