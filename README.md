@@ -84,11 +84,14 @@ SAHAM_DATA_SOURCE=mock npm run dev
    `CRON_SECRET` dengan nilai string acak (mis. hasil dari
    `openssl rand -hex 32`). Dipakai untuk otentikasi endpoint ingestion —
    baik oleh Vercel Cron maupun panggilan manual.
-4. **Ambil token Stockbit** (lihat langkah di bawah), lalu tambah env var:
-   - `STOCKBIT_TOKEN` = token yang disalin
-   - `WATCHLIST_CODES` = daftar kode saham pribadi dipisah koma, mis.
-     `BBCA,ADRO,GOTO`
-5. **Redeploy** setelah semua env var di atas ter-set.
+4. **Ambil token Stockbit** (lihat langkah di bawah), lalu tambah env var
+   `STOCKBIT_TOKEN` = token yang disalin.
+5. **(Opsional) `WATCHLIST_CODES`** = daftar kode saham pribadi dipisah
+   koma, mis. `BBCA,ADRO,GOTO`. Kalau dilewati, otomatis pakai daftar
+   default 10 saham likuid (`BBCA,BBRI,BMRI,BBNI,TLKM,ASII,GOTO,ADRO,ANTM,ICBP`
+   — lihat `DEFAULT_WATCHLIST` di `tickers.ts`/`fetch_stockbit_daily.py`).
+   Ganti kapan saja sesuai saham yang mau kamu pantau.
+6. **Redeploy** setelah semua env var di atas ter-set.
 
 ### 2. Ambil token Stockbit
 
@@ -120,7 +123,9 @@ sesungguhnya untuk harga/volume/net asing.
 → *New repository secret*, tambahkan satu-satu):
 1. `DATABASE_URL` — **sama persis** dengan yang di Vercel
 2. `STOCKBIT_TOKEN` — **sama persis** dengan yang di Vercel
-3. `WATCHLIST_CODES` — **sama persis** dengan yang di Vercel
+3. `WATCHLIST_CODES` — **opsional**, sama persis dengan yang di Vercel
+   kalau kamu isi. Kalau dilewati di kedua tempat, otomatis pakai daftar
+   default yang sama (lihat langkah 5 di atas).
 
 ⚠️ Saat paste `DATABASE_URL`: copy **hanya baris URL-nya saja**
 (`postgresql://...`), jangan ikut baris komentar `#` atau baris lain dari

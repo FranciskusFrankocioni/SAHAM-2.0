@@ -4,6 +4,7 @@ import { fetchBrokerDistribution } from "@/lib/stockbit/stockbitSource";
 import { StockbitAuthError, StockbitUnavailableError } from "@/lib/stockbit/types";
 import { upsertBrokerSummary, logIngestion } from "@/lib/db/store";
 import { toIsoDate } from "@/lib/idx/idxSource";
+import { DEFAULT_WATCHLIST } from "@/lib/idx/tickers";
 
 export const maxDuration = 60;
 
@@ -27,17 +28,13 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const watchlist = (process.env.WATCHLIST_CODES ?? "")
-    .split(",")
-    .map((c) => c.trim().toUpperCase())
-    .filter(Boolean);
-
-  if (watchlist.length === 0) {
-    return NextResponse.json(
-      { error: "WATCHLIST_CODES is not set (comma-separated stock codes, e.g. BBCA,ADRO)." },
-      { status: 500 }
-    );
-  }
+  const watchlistRaw = process.env.WATCHLIST_CODES ?? "";
+  const watchlist = watchlistRaw.trim()
+    ? watchlistRaw
+        .split(",")
+        .map((c) => c.trim().toUpperCase())
+        .filter(Boolean)
+    : [...DEFAULT_WATCHLIST];
 
   const date = toIsoDate(new Date());
   const results: Array<{ code: string; status: string; rows?: number; error?: string }> = [];
