@@ -131,7 +131,13 @@ def fetch_snapshot(date_compact: str) -> list[dict]:
         },
         timeout=REQUEST_TIMEOUT,
     )
-    resp.raise_for_status()
+    if resp.status_code != 200:
+        server_header = resp.headers.get("server", "?")
+        body_preview = (resp.text or "")[:800].replace("\n", " ")
+        raise RuntimeError(
+            f"HTTP {resp.status_code} from IDX (server={server_header}). "
+            f"Body preview: {body_preview!r}"
+        )
     data = resp.json()
     if isinstance(data, list):
         return data
