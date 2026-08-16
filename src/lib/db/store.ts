@@ -99,13 +99,19 @@ export interface StoredHistory {
 
 export async function getBarsForCode(
   code: string,
-  tradingDays: number
+  tradingDays: number,
+  asOfDate: string
 ): Promise<StoredHistory | null> {
   await ensureSchema();
   const pool = getPool();
+  // `date <= asOfDate` is what keeps this to closed trading days: rows for
+  // "today" only exist once ingested, and the caller only passes today's
+  // date here once market close has actually passed (see
+  // src/lib/tradingCalendar.ts). Weekends/holidays are skipped for free —
+  // they never got a row in the first place.
   const result = await pool.query(
-    `SELECT * FROM daily_bars WHERE code = $1 ORDER BY date DESC LIMIT $2`,
-    [code, tradingDays]
+    `SELECT * FROM daily_bars WHERE code = $1 AND date <= $2 ORDER BY date DESC LIMIT $3`,
+    [code, asOfDate, tradingDays]
   );
   if (result.rows.length === 0) return null;
 
@@ -203,16 +209,22 @@ export interface StoredBrokerSummary {
   sell: BrokerRow[];
 }
 
-/** Latest stored broker summary for a stock (most recent date on record). */
+/**
+ * Latest stored broker summary for a stock, capped at `asOfDate` (same
+ * closed-trading-day ceiling used for price bars — see
+ * src/lib/tradingCalendar.ts) so a same-day manual/mid-session fetch can
+ * never masquerade as a finished day's broker summary.
+ */
 export async function getLatestBrokerSummary(
   code: string,
+  asOfDate: string,
   source = "stockbit"
 ): Promise<StoredBrokerSummary | null> {
   await ensureSchema();
   const pool = getPool();
   const latest = await pool.query(
-    `SELECT MAX(date) AS date FROM broker_summary WHERE code = $1 AND source = $2`,
-    [code, source]
+    `SELECT MAX(date) AS date FROM broker_summary WHERE code = $1 AND source = $2 AND date <= $3`,
+    [code, source, asOfDate]
   );
   const date = latest.rows[0]?.date;
   if (!date) return null;

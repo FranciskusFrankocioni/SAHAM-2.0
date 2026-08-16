@@ -35,6 +35,7 @@ export async function GET(
     source: history.source,
     warning: history.warning ?? null,
     asOf: history.asOf,
+    tradingDate: history.tradingDate,
     overallSignal: analysis.overallSignal,
     foreignNetTotal: analysis.foreignNetTotal,
     adLineChange: analysis.adLineChange,

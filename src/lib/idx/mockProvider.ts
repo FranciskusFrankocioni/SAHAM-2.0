@@ -1,5 +1,6 @@
 import type { DailyBar, IdxProvider, StockHistory } from "./types";
 import { findTicker } from "./tickers";
+import { getTradingDateCeiling } from "../tradingCalendar";
 
 // Deterministic pseudo-random number generator seeded by a string, so the
 // same stock code always produces the same mock chart (stable across
@@ -18,15 +19,24 @@ function seededRandom(seed: string) {
   };
 }
 
+// Mock data mirrors the real provider's "closed trading day only" rule so
+// the UI looks/behaves the same in mock mode as it does with real data.
 function lastTradingDays(count: number): string[] {
+  const ceiling = getTradingDateCeiling();
+  const [y, m, d] = ceiling.split("-").map(Number);
+  const cursor = new Date(Date.UTC(y, m - 1, d));
+
   const days: string[] = [];
-  const cursor = new Date();
   while (days.length < count) {
-    const dow = cursor.getDay();
+    const dow = cursor.getUTCDay();
     if (dow !== 0 && dow !== 6) {
-      days.unshift(cursor.toISOString().slice(0, 10));
+      days.unshift(
+        `${cursor.getUTCFullYear()}-${String(cursor.getUTCMonth() + 1).padStart(2, "0")}-${String(
+          cursor.getUTCDate()
+        ).padStart(2, "0")}`
+      );
     }
-    cursor.setDate(cursor.getDate() - 1);
+    cursor.setUTCDate(cursor.getUTCDate() - 1);
   }
   return days;
 }
@@ -102,12 +112,14 @@ export const mockProvider: IdxProvider = {
   async getHistory(code: string, tradingDays: number): Promise<StockHistory> {
     const normalized = code.toUpperCase();
     const known = findTicker(normalized);
+    const bars = buildMockBars(normalized, tradingDays);
     return {
       code: normalized,
       name: known?.name ?? `${normalized} (nama tidak diketahui)`,
-      bars: buildMockBars(normalized, tradingDays),
+      bars,
       source: "mock",
       asOf: new Date().toISOString(),
+      tradingDate: bars[bars.length - 1].date,
     };
   },
 };

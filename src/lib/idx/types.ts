@@ -21,7 +21,10 @@ export interface StockHistory {
   bars: DailyBar[];
   source: DataSource;
   warning?: string;
+  /** When this data was fetched/generated (timestamp, not a trading date). */
   asOf: string;
+  /** YYYY-MM-DD of the last closed trading day actually shown — see src/lib/tradingCalendar.ts. */
+  tradingDate: string;
 }
 
 export interface IdxProvider {

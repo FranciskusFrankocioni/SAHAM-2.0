@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getStockHistory, getBrokerSummary } from "@/lib/idx/provider";
 import { analyzeStock } from "@/lib/idx/indicators";
-import { formatCompact, formatDateTimeShort } from "@/lib/format";
+import { formatCompact, formatTradingDate } from "@/lib/format";
 import { SearchBar } from "@/components/SearchBar";
 import { SummaryCards } from "@/components/SummaryCards";
 import { PriceChart } from "@/components/PriceChart";
@@ -61,9 +61,11 @@ export default async function StockPage({
             {history.name}
           </span>
         </h1>
+        <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+          Data per: {formatTradingDate(history.tradingDate)}
+        </p>
         <p className="text-xs text-zinc-500">
-          Data {history.source === "idx" ? "IDX" : "contoh (dummy)"} &middot;
-          {" "}diperbarui {formatDateTimeShort(history.asOf)} WIB
+          Sumber: {history.source === "idx" ? "Stockbit" : "contoh (dummy)"}
         </p>
       </div>
 

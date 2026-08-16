@@ -2,6 +2,7 @@ import { mockProvider } from "./mockProvider";
 import type { StockHistory } from "./types";
 import { isDbConfigured } from "../db/client";
 import { getBarsForCode, getLatestBrokerSummary, type StoredBrokerSummary } from "../db/store";
+import { getTradingDateCeiling } from "../tradingCalendar";
 
 const FORCE_MOCK = process.env.SAHAM_DATA_SOURCE === "mock";
 
@@ -22,10 +23,11 @@ export async function getStockHistory(
   tradingDays: number
 ): Promise<StockHistory> {
   const normalizedCode = code.toUpperCase();
+  const asOfDate = getTradingDateCeiling();
 
   if (!FORCE_MOCK && isDbConfigured()) {
     try {
-      const stored = await getBarsForCode(normalizedCode, tradingDays);
+      const stored = await getBarsForCode(normalizedCode, tradingDays, asOfDate);
       if (stored && stored.bars.length > 0) {
         return {
           code: normalizedCode,
@@ -33,6 +35,7 @@ export async function getStockHistory(
           bars: stored.bars,
           source: "idx",
           asOf: stored.lastFetchedAt,
+          tradingDate: stored.bars[stored.bars.length - 1].date,
         };
       }
     } catch (err) {
@@ -66,7 +69,7 @@ export async function getStockHistory(
 export async function getBrokerSummary(code: string): Promise<StoredBrokerSummary | null> {
   if (!isDbConfigured()) return null;
   try {
-    return await getLatestBrokerSummary(code.toUpperCase());
+    return await getLatestBrokerSummary(code.toUpperCase(), getTradingDateCeiling());
   } catch {
     return null;
   }
